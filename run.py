@@ -13,37 +13,37 @@ from glacial_fluvial_functions import stream
 import matplotlib.pyplot as plt
 import os
 
-## PARAMETERS TO TEST
-backgroundU = 0.5/1000 # in m/yr
-D0 = 200/1000 # in m
-a = 0.02/1000
-erosion_depth_threshold = 0.2
-glacial_discharge = True
-glacial_sed_supply = True
-isostacy = True
+""" PARAMETERS TO TEST from inputs.py
+backgroundU 
+D0 
+a
+erosion_depth_threshold
+glacial_discharge_sw
+glacial_sed_supply_sw
+isostacy
+dt
+dt_g
+dt_i
+dx
+nodes
+initial_slope
+initial_sed_depth
+"""
+from inputs import backgroundU, D0, a, erosion_depth_threshold, glacial_discharge_sw, glacial_sed_supply_sw, isostacy_sw, dt, dt_g, dt_i, dx, nodes, initial_slope, initial_sed_depth
 
 
 ### TIME
-dt = 5.
-dt_g = 0.01
-dt_i = 10
+dt = int(dt)
 glacierrepeats = int(dt/dt_g)
-spinuptime = int(5000/dt)
-analysistime = int(800000/dt)
+spinuptime = 3000000
+analysistime = 50000
 totaltime = spinuptime + analysistime
 
 
-### MODEL SET UP
-dx = 2000
-nodes = 100
-initial_slope = 0.02
-initial_sed_depth = 0.1
-
 ## INSTANTIATE MODEL & GET CONSTANTS
-river = stream(dx, nodes, initial_slope, initial_sed_depth)
+river = stream(dx, nodes, initial_slope, initial_sed_depth, glacial_sed_supply_sw, glacial_discharge_sw)
 river.get_basin_geometry()
 river.get_sediment_size(D0, a)
-river.get_fall_velocity()
 
 k10 = int(10000/dt)
 dz_b_save = np.ones((nodes, k10)) * backgroundU
@@ -54,11 +54,9 @@ fig,[ax1, ax2, ax3] = plt.subplots(3, 1)
 time = 0
 dz_b_foricalc = np.zeros(nodes)
 while time in range (0, spinuptime):
-    dz_s, dz_b, dz_w = river.run_one_fluvial(dz_b_save, backgroundU, dt)
-    river.sed_depth -= dz_s
-    river.z += dz_b
+    dz_s, dz_b, dz_w = river.run_one_fluvial(dz_b_save, backgroundU, erosion_depth_threshold, dt)
  
-    if isostacy == True:
+    if isostacy_sw == True:
         dz_b_foricalc += dz_b
         if time%dt_i == 0:
             (dz_b_i) = river.isostacy(dz_b_foricalc, np.zeros(nodes), dt_i)
@@ -70,42 +68,32 @@ while time in range (0, spinuptime):
     river.z += backgroundU*dt
     river.z[-1] = 0
     river.sed_depth[-1] = 0
-    time += 1
+    time += dt
 
 
 ### RUN MODEL WITH GLACIERS #############################
 HICE_prior = 1 * river.HICE[:]
 dzbforsave = np.zeros(nodes)
 while time in range(spinuptime, totaltime):
+    
+    if time-spinuptime == 5000:
+        print('pause here')
+        
+    #### GLACIAL EROSION ######################################################
+    analysis_time = time-spinuptime
+    
+    Eg_total, ELA = river.run_one_glacial(analysis_time, dt_g, dt)
+    dz_b_foricalc += Eg_total
+
+    
     #### FLUVIAL EROSION ######################################################
-    dz_s, dz_b, dz_w = river.run_one_fluvial(dz_b_save, backgroundU, dt)
-    river.sed_depth -= dz_s
-    river.z += dz_b    
+    river.get_sediment_size(D0, a)
+    dz_s, dz_b, dz_w = river.run_one_fluvial(dz_b_save, backgroundU, erosion_depth_threshold, dt)   
     dz_b_foricalc += dz_b
 
-    #### GLACIAL EROSION ######################################################
-    time2 = 0
-    Qw_melt = 0
-    glacial_sed_supply = 0
-    
-    # calculate new ELA    
-    ELA = river.get_ELA(time, dt, averageELA = 2000, amplitude = 1000, period = 100000, shape = 'sawtooth')
-       
-    while time2 in range(0, glacierrepeats):
-        # calculate annual ELA, with a 10 C annual variation
-        ELA2 = 800 * np.sin(2*np.pi*time2/glacierrepeats) + ELA
-        (Eg, Qw_melt_new, dHdt, new_glacial_sed_supply) = river.run_one_glacial(ELA2, dt_g)
-        
-        if glacial_discharge == True:
-            Qw_melt += Qw_melt_new
-        if glacial_sed_supply == True:
-            glacial_sed_supply += new_glacial_sed_supply
-            
-        time2 += 1
-        dz_b_foricalc += Eg
 
     #### ISOSTATIC ADJUSTMENTS ################################################
-    if isostacy == True:
+    if isostacy_sw == True:
         if time%dt_i == 0:
             dHICE = river.HICE - HICE_prior
             (dz_b_i) = river.isostacy(dz_b_foricalc, np.zeros(nodes), dt_i)
@@ -121,36 +109,36 @@ while time in range(spinuptime, totaltime):
     river.sed_depth[-1] = 0
        
     #### PLOTTING #############################################################
-    if ((time+1)*dt)%100000 == 0:
+    if analysis_time%100000 == 0:
         ax3.clear()
-    if ((time+1)*dt)%1000 == 0:
+    if analysis_time%500 == 0:
         ax1.clear()
         ax2.clear()
         ax1.plot(river.x/1000, river.z, 'k-', river.x/1000, river.z+river.sed_depth, '--r', river.x/1000, river.z+river.sed_depth+river.HICE, 'b-.')
         ax1.legend(['bedrock', 'sediment', 'ice'])
-        ax1.set_title('Model year %s' % ((time+1-spinuptime)*dt))
+        ax1.set_title('Model year %s' % analysis_time)
         ax2.plot(river.x/1000, river.sed_depth, river.x/1000, river.HICE)
         ax2.legend(['sediment', 'ice'])
         ax2.set_xlabel('Downstream distance (km)')
         ax2.set_ylabel('Height (m)')
-        ax3.plot((time*dt)%100000, ELA, 'o', color = 'grey')
+        ax3.plot((analysis_time)%100000, ELA, 'o', color = 'grey')
         ax3.set_ylabel('ELA elevation')
         ax3.set_xlim([0, 100000])
         ax3.set_ylim([1000, 3000])
         plt.show()
         plt.pause(0.0000001)
-        print ('Calculated model year %s' % ((time+1)*dt))
+        print ('Calculated model year %s' % analysis_time)
 
-        fig.savefig('time_%06d.png' % int((time+1)*dt))
+        fig.savefig('time_%06d.png' % analysis_time)
         
     ##### SAVE VARIABLES ######################################################
-    if ((time+1)*dt)%1000 == 0:
+    if analysis_time%1000 == 0:
         # save variables now
-        year = int((time+1-spinuptime)*dt)
+        year = analysis_time
         np.savetxt('z_%06d.txt' % year, river.z)
         np.savetxt('sed_%06d.txt' % year, river.sed_depth)
         np.savetxt('ice_%06d.txt' % year, river.HICE)
         np.savetxt('dzb_%06d.txt' % year, dzbforsave)
         dzbforsave[:] = 0
 
-    time += 1         
+    time += dt
