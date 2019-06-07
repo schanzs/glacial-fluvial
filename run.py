@@ -74,6 +74,7 @@ while time in range (0, spinuptime):
 ### RUN MODEL WITH GLACIERS #############################
 HICE_prior = 1 * river.HICE[:]
 dzbforsave = np.zeros(nodes)
+egforsave = np.zeros(nodes)
 while time in range(spinuptime, totaltime):
     
     if time-spinuptime == 5000:
@@ -104,6 +105,7 @@ while time in range(spinuptime, totaltime):
     # Tracking variables:
     dz_b_save[:,time%k10] = -dz_b/dt
     dzbforsave += -dz_b/dt
+    egforsave += Eg_total/dt
     river.z += backgroundU*dt
     river.z[-1] = 0
     river.sed_depth[-1] = 0
@@ -139,6 +141,9 @@ while time in range(spinuptime, totaltime):
         np.savetxt('sed_%06d.txt' % year, river.sed_depth)
         np.savetxt('ice_%06d.txt' % year, river.HICE)
         np.savetxt('dzb_%06d.txt' % year, dzbforsave)
+        np.savetxt('eg_%06d.txt' % year, egforsave)
+        np.savetxt('wv_%06d.txt' % year, river.Wv)
         dzbforsave[:] = 0
+        egforsave[:] = 0
 
     time += dt
