@@ -27,7 +27,7 @@ class stream(object):
     kw = -7.3*kf
     A = 2.1*10e-18  #Arrhenius constant
     C1 = 0.0012 # sliding coefficient
-    C2 = 0.000001 # erosion coefficient
+    C2 = 1 # erosion coefficient
     alpha = 0.01 # meters/ (year meters) from Oerlemans, 1984
     
     dt_min = 0.1
@@ -50,6 +50,7 @@ class stream(object):
         self.H = np.zeros(nodes)
         
         self.Qw_change = 0
+        self.Qw = np.zeros(nodes)
         self.glacial_sed_supply = 0
         
         self.glacial_sed_supply_sw = glacial_sed_supply_sw
@@ -63,6 +64,7 @@ class stream(object):
         kQ = 10**-7
         eQ = 1
         self.Qwi = kQ * self.Ah**eQ
+        self.Qw_diff = np.hstack((self.Qwi[0], np.diff(self.Qwi)))
         
         kw = 5.
         eW = 0.5
@@ -308,8 +310,8 @@ class stream(object):
         
         # erosion rule, proportional to sliding velocity. No erosion at last node. Lots of checks for where there is no ice and Us is either Inf or NaN. 
         #erosion = np.append([self.C2 * Us], [0])
-        # erosion rule of quarrying from Iverson, 2012 (in this case all eroded material is bedload), using a Gaussian distribution of fracture spacing in a homogeneous bedrock:
-        erosion = np.append([self.C2 * Us**1.86], [0])
+        # erosion rule of quarrying from Iverson, 2012 (in this case all eroded material is bedload), using a Gaussian distribution of fracture spacing in a heterogenous bedrock:
+        erosion = np.append([self.C2 * Us**0.46], [0])/1000
         erosion[np.isnan(erosion)] = 0
         erosion[np.isinf(erosion)] = 0
         erosion[np.where(erosion<0)] = 0
@@ -378,11 +380,11 @@ class stream(object):
         # add glacial stuff
         first_fluvial = np.min(np.where(self.HICE == 0))
         self.Qs_hills[first_fluvial] += self.glacial_sed_supply
-        Qw = 1*self.Qwi[:]
-        Qw[first_fluvial] += self.Qw_change
+        self.Qw[:first_fluvial] = 0
+        self.Qw[first_fluvial:] = self.Qw_change + self.Qwi[first_fluvial:]
         
         self.get_slope()
-        self.get_water_height(Qw)
+        self.get_water_height(self.Qw)
         self.get_taub()
         
         dz_s = self.calc_sediment_erosion(dt)

@@ -35,8 +35,8 @@ from inputs import backgroundU, D0, a, erosion_depth_threshold, glacial_discharg
 ### TIME
 dt = int(dt)
 glacierrepeats = int(dt/dt_g)
-spinuptime = 3000000
-analysistime = 50000
+spinuptime = 5000000
+analysistime = 800000
 totaltime = spinuptime + analysistime
 
 
@@ -76,9 +76,7 @@ HICE_prior = 1 * river.HICE[:]
 dzbforsave = np.zeros(nodes)
 egforsave = np.zeros(nodes)
 while time in range(spinuptime, totaltime):
-    
-    if time-spinuptime == 5000:
-        print('pause here')
+
         
     #### GLACIAL EROSION ######################################################
     analysis_time = time-spinuptime
