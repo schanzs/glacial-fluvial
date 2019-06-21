@@ -27,7 +27,7 @@ class stream(object):
     kw = -7.3*kf
     A = 2.1*10e-18  #Arrhenius constant
     C1 = 0.0012 # sliding coefficient
-    C2 = 1 # erosion coefficient
+    C2 = 0.01 # erosion coefficient
     alpha = 0.01 # meters/ (year meters) from Oerlemans, 1984
     
     dt_min = 0.1
@@ -94,9 +94,9 @@ class stream(object):
     
 
         
-    def get_sediment_in(self, dz_b, dt):
+    def get_sediment_in(self, dz_b):
         dA = np.hstack((self.Ah[0], np.diff(self.Ah)))
-        self.Qs_hills = self.rhos * self.beta * dA * dz_b * dt
+        self.Qs_hills = self.rhos * self.beta * dA * dz_b
         
         
         
@@ -112,37 +112,52 @@ class stream(object):
         ---------
         dt = time step (years)
         """
-        tau_star = np.zeros(self.nodes)
-        tau_star[self.HICE == 0] = self.taub[self.HICE == 0]/((self.rhos-self.rhow)*self.g*self.D[self.HICE == 0])
-        tau_diff = tau_star - self.tauc
-        tau_diff[np.where(tau_diff<0)] = 0
-        self.Qs_n = self.Qs_hills + self.Qs_down[:-1]
-        self.Qs_cap = self.frac_yr_transport * self.rhos * ((self.rhos-self.rhow)/self.rhow * self.g * self.D**3) ** (0.5) * 3.97 * ((tau_diff)**(3/2)) * self.W
         
-        self.Qs_n[np.where(self.HICE>0)] = 0
-        self.Qs_cap[np.where(self.HICE > 0)] = 0
+        def calc_mass_change():
+            # sed in:
+            self.Qs_n = self.Qs_hills + self.Qs_down[:-1] # kg/yr
+            self.Qs_down[:] = 0
+            
+            # calculate shear stresses
+            tau_star = np.zeros(self.nodes)
+            tau_star[self.HICE == 0] = self.taub[self.HICE == 0]/((self.rhos-self.rhow)*self.g*self.D[self.HICE == 0])
+            tau_diff = tau_star - self.tauc
+            tau_diff[np.where(tau_diff<0)] = 0
+
+            self.Qs_cap = self.frac_yr_transport * self.rhos * ((self.rhos-self.rhow)/self.rhow * self.g * self.D**3) ** (0.5) * 3.97 * ((tau_diff)**(3/2)) * self.W
         
-        mass_change = dt * self.Qs_cap * np.pi*10**7 - self.Qs_n
-        dz_s = (1-(1-self.L)) * mass_change/(self.Wv * self.rhos * self.dx)
-        erosion = np.where(mass_change>0)[0]
-        dz_s[erosion] = (1-(1-self.L)) * mass_change[erosion]/(self.W[erosion] * self.rhos * self.dx)
+            self.Qs_n[np.where(self.HICE>0)] = 0
+            self.Qs_cap[np.where(self.HICE > 0)] = 0
+            
+            # calculate change in sediment: aggrade over valley width, erode over channel
+            mass_change = self.Qs_cap * np.pi*10**7 - self.Qs_n
+            dz_s = (1-(1-self.L)) * mass_change/(self.Wv * self.rhos * self.dx)
+            erosion = np.where(mass_change>0)[0]
+            dz_s[erosion] = (1-(1-self.L)) * mass_change[erosion]/(self.W[erosion] * self.rhos * self.dx)
         
-        Qs_pass = mass_change
-        erodes_all = dz_s - self.sed_depth
-        eroding_all = np.where((erodes_all > 0) & (self.sed_depth > 0))[0]
-        dz_s[eroding_all] = self.sed_depth[eroding_all]
-        Qs_pass[eroding_all] = self.Qs_n[eroding_all]
-        dz_s[np.where(dz_s > self.sed_depth)] = self.sed_depth[np.where(dz_s > self.sed_depth)]        
+            return mass_change, dz_s
+
+        mass_change, dz_s = calc_mass_change()
+        dz_s = dz_s * dt
+
+        # calculate sediment to pass next time:
+        Qs_pass = mass_change * dt
+        Qs_pass[dz_s >= self.sed_depth] = self.Qs_n[dz_s >= self.sed_depth]
+        dz_s[dz_s >= self.sed_depth] = self.sed_depth[dz_s >= self.sed_depth]     
+
 
         # now add in what has been eroded or deposited to get the total sed downstream
         # change Qs_down
         self.Qs_down[1:] = (self.rhos*dz_s * self.Wv * self.dx) + Qs_pass
+        erosion = np.where(mass_change>0)[0]
         self.Qs_down[erosion+1] = (self.rhos * dz_s[erosion] * self.W[erosion] * self.dx) + Qs_pass[erosion]
-        self.Qs_down[np.where(self.Qs_down<0)] = 0
-
+        self.Qs_down[self.Qs_down<0] = 0
+        
+        # update the sediment height:
+        self.sed_depth -= dz_s
+        self.sed_depth[-1] = 0
+                    
         return dz_s
-
-
       
     def calc_bedrock_erosion(self, dt, depth_threshold, erosion_type=1):
         """Calculates bedrock erosion based on stream power. Placeholder for saltation abrasion is put in. 
@@ -221,7 +236,7 @@ class stream(object):
         return (dz_b_i)     
     
 
-    def get_ELA(self, time, averageELA = 2000, amplitude = 500, period = 100000, shape = 'sawtooth'):
+    def get_ELA(self, time, averageELA, amplitude, period = 100000, shape = 'sawtooth'):
         """ Function calculates the ELA for each time step 
         Parameters:
         ---------
@@ -375,11 +390,11 @@ class stream(object):
         
         sed_supply = np.mean(dz_b_save, axis=1)
         sed_supply[np.where(sed_supply<backgroundU)] = backgroundU
-        self.get_sediment_in(sed_supply, dt)
+        self.get_sediment_in(sed_supply)
         
         # add glacial stuff
         first_fluvial = np.min(np.where(self.HICE == 0))
-        self.Qs_hills[first_fluvial] += self.glacial_sed_supply
+        self.Qs_hills[first_fluvial] += self.glacial_sed_supply/self.Wv[first_fluvial]*self.W[first_fluvial] # spread glacial pushed sed across valley and only transport that in channel.
         self.Qw[:first_fluvial] = 0
         self.Qw[first_fluvial:] = self.Qw_change + self.Qwi[first_fluvial:]
         
@@ -388,9 +403,10 @@ class stream(object):
         self.get_taub()
         
         dz_s = self.calc_sediment_erosion(dt)
-        self.sed_depth -= dz_s
-        dz_b = self.calc_bedrock_erosion(dt, depth_threshold, erosion_type=1)
-        self.z += dz_b
+        
+        
+        dz_b = self.calc_bedrock_erosion(depth_threshold, erosion_type = 1)
+        self.z += dz_b * dt
         dz_w = self.calc_bank_erosion(dt)
         
         ## convert dz to values
@@ -400,7 +416,7 @@ class stream(object):
         
         return dz_s, dz_b, dz_w
         
-    def run_one_glacial(self, analysis_time, dt_g, dt):
+    def run_one_glacial(self, analysis_time, averageELA, amplitude, dt_g, dt):
         time2 = 0
         Eg_total = 0
         self.Qw_change = 0
@@ -408,7 +424,7 @@ class stream(object):
         
         
         while time2 in range(0, dt):
-            ELA = self.get_ELA(analysis_time, averageELA = 2000, amplitude = 1000, period = 100000, shape = 'sawtooth')
+            ELA = self.get_ELA(analysis_time, averageELA, amplitude, period = 100000, shape = 'sawtooth')
             ELA_annual = 800 * np.sin(2*np.pi*time2) + ELA
             (Eg, dHdt) = self.get_glacial_erosion(ELA_annual, dt_g)
             Eg_total += Eg

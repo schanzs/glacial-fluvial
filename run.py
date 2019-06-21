@@ -11,7 +11,6 @@ Created on Fri Mar  1 13:45:55 2019
 import numpy as np
 from glacial_fluvial_functions import stream
 import matplotlib.pyplot as plt
-import os
 
 """ PARAMETERS TO TEST from inputs.py
 backgroundU 
@@ -64,11 +63,17 @@ while time in range (0, spinuptime):
             dz_b_foricalc[:] = 0
     
     # Tracking variables:       
-    dz_b_save[:,time%k10] = -dz_b/dt    
+    dz_b_save[:,int((time/dt)%k10)] = -dz_b/dt    
     river.z += backgroundU*dt
     river.z[-1] = 0
     river.sed_depth[-1] = 0
     time += dt
+
+        
+### CALCULATE ELA PARAMETERS BASED ON FRACTION OF PROFILE
+zrange = np.max(river.z) - np.min(river.z)
+averageELA = 1/3 * zrange
+amplitude = 1/6 * zrange
 
 
 ### RUN MODEL WITH GLACIERS #############################
@@ -81,7 +86,7 @@ while time in range(spinuptime, totaltime):
     #### GLACIAL EROSION ######################################################
     analysis_time = time-spinuptime
     
-    Eg_total, ELA = river.run_one_glacial(analysis_time, dt_g, dt)
+    Eg_total, ELA = river.run_one_glacial(analysis_time, averageELA, amplitude, dt_g, dt)
     dz_b_foricalc += Eg_total
 
     
@@ -95,13 +100,13 @@ while time in range(spinuptime, totaltime):
     if isostacy_sw == True:
         if time%dt_i == 0:
             dHICE = river.HICE - HICE_prior
-            (dz_b_i) = river.isostacy(dz_b_foricalc, np.zeros(nodes), dt_i)
+            (dz_b_i) = river.isostacy(dz_b_foricalc, dHICE, dt_i)
             river.z += dz_b_i
             HICE_prior[:] = river.HICE[:]
             dz_b_foricalc[:] = 0
 
     # Tracking variables:
-    dz_b_save[:,time%k10] = -dz_b/dt
+    dz_b_save[:,int((time/dt)%k10)] = -dz_b/dt
     dzbforsave += -dz_b/dt
     egforsave += Eg_total/dt
     river.z += backgroundU*dt
@@ -111,7 +116,7 @@ while time in range(spinuptime, totaltime):
     #### PLOTTING #############################################################
     if analysis_time%100000 == 0:
         ax3.clear()
-    if analysis_time%500 == 0:
+    if analysis_time%10000 == 0:
         ax1.clear()
         ax2.clear()
         ax1.plot(river.x/1000, river.z, 'k-', river.x/1000, river.z+river.sed_depth, '--r', river.x/1000, river.z+river.sed_depth+river.HICE, 'b-.')

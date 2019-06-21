@@ -80,10 +80,10 @@ ice[ice == 0] = np.nan
 ksn_diff[np.abs(ksn_diff)<0.5] = np.nan
 
 # PLOT
-tin, xin = np.meshgrid(time[:], x[:60]/1000)
-fig, ax = plt.subplots(4,1, sharex=True)
+tin, xin = np.meshgrid(time[:], x/1000)
+fig, ax = plt.subplots(6,1, sharex=True)
 minor_ticksx = np.arange(0, 800, 50)*1000
-minor_ticksy = np.arange(0, 61, 10)
+minor_ticksy = np.arange(0, 200, 10)
 plotting = (dzb,
             eg,
             sed,
@@ -113,7 +113,7 @@ vmaxv = (np.nanmax(plotting[0]),
         np.nanmax(np.abs(plotting[5])))
 
 for axis, i in zip(ax, np.arange(0, 6)):
-    name = axis.pcolormesh(tin, xin, plotting[i][:60,:], cmap = colormap[i], vmax = vmaxv[i], vmin = vminv[i])
+    name = axis.pcolormesh(tin, xin, plotting[i], cmap = colormap[i], vmax = vmaxv[i], vmin = vminv[i])
     axis.set_xticks(minor_ticksx, minor=True)
     axis.set_yticks(minor_ticksy, minor=True)
     axis.grid(which='minor', alpha = 0.5, linestyle=':', color='darkgray')
