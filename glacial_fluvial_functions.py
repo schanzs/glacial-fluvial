@@ -6,285 +6,333 @@ Created on Fri Mar  1 13:49:50 2019
 @author: saschanz
 """
 
-""" stream functions that accompany glacial-fluvial model """
+""" 
+STREAM FUNCTIONS
+This script runs the erosion for the glacial fluvial model through the creation of the object 'stream' and its associated functions.
+
+The object is created in either spin_up_run.py or analysis_run.py
+
+Functions are arranged as:
+    __init__
+    get_(various) - alphabetical, for getting channel geometry-related variables
+    calc_(various) - alphabetical, for longer calculations of channel change/erosion
+    run_one_(various) - alphabetical, overarching functions used to run one timestep
+
+Questions? contact:
+    Sarah Schanz
+    sschanz@coloradocollege.edu
+    (719)389-6513
+"""
+
 import numpy as np
 from scipy.special import kei
 
 
 class stream(object):
-    g = 9.81
-    rhow = 1000
-    rhoi = 917
-    rhos = 2650
-    rhom = 3300
-    beta = 0.2
-    R = rhos/rhow - 1
-    tauc = 0.0495
-    n = 0.04
-    frac_yr_transport = 0.05
-    L = 0.2
-    kf = -10**-5
-    kw = -7.3*kf
-    A = 2.1*10e-18  #Arrhenius constant
-    C1 = 0.0012 # sliding coefficient
-    C2 = 0.01 # erosion coefficient
-    alpha = 0.01 # meters/ (year meters) from Oerlemans, 1984
+    g = 9.81            # gravitational acceleration, meters per second squared
+    rhow = 1000         # density of water, cubic meters per second
+    rhoi = 917          # density of ice, cubic meters per second
+    rhos = 2650         # density of sediment, cubic meters per second
+    rhom = 3300         # density of asthenosphere, cubic meters per second
+    beta = 0.2          # fraction of eroded hillslope material that is bedload
+    R = rhos/rhow - 1   # specific gravity of sediment
+    tauc = 0.0495       # critical shear stress
+    n = 0.04            # Manning's roughness
+    frac_yr_transport = 0.05  # fraction of the year experiencing erosion
+    L = 0.2             # lambda, porosity of bedload
+    kf = -10**-5        # vertical erosion coefficient
+    kw = -7.3*kf        # lateral bedrock erosion coefficient, 7.3 times vertical from Finnegan and Dietrich, 2012
+    A = 2.1*10e-18      # Arrhenius constant
+    C1 = 0.0012         # glacial sliding coefficient from Iverson (2012) for a Gaussian distribution of fractures in heterogenous rock
+    C2 = 100            # glacial erosion coefficient from Iverson (2012) for a Gaussian distribution of fractures in heterogenous rock
+    alpha = 0.01        # meters/ (year meters) from Oerlemans, 1984
+
     
-    dt_min = 0.1
-    
-    def __init__(self, dx, nodes, initial_slope, initial_sed_depth, glacial_sed_supply_sw, glacial_discharge_sw):
+    def __init__(self, dx, nodes, initial_slope, initial_sed_depth, glacial_sed_supply_sw, glacial_discharge_sw, sediment_transport):
+        """
+        Initalization for object of class stream
+        ----------
+        dx : integer
+            meter spacing between nodes.
+        nodes : integer
+            number of model nodes
+        initial_slope : float
+            slope of initial river, often overriden if elevation specified later.
+        initial_sed_depth : float
+            thickness of sediment on river.
+        glacial_sed_supply_sw : boolean
+            turns transfer of glacially eroded bedload on or off.
+        glacial_discharge_sw : boolean
+            turns transfer of glacial melt to river on or off.
+        sediment_transport : boolean
+            turns sediment transport on or off.
+
+        Returns
+        -------
+        None.
+
+        """
         self.nodes = nodes
         self.dx = dx
         self.initial_slope = initial_slope
         
-        self.x = np.arange(0, nodes*dx, dx)
+        # use input model set up to make distance, elevation, sed depth:
+        self.x = np.arange(0, self.nodes*self.dx, self.dx)
         self.z = initial_slope * (max(self.x)-self.x)
         self.z[-1] = 0
-        
         self.sed_depth = np.ones(nodes)*initial_sed_depth
 
+        # set up empties for later
+        self.HICE = np.zeros(nodes)         # height of ice
+        self.Qs_down = np.zeros(nodes+1)    # sediment flux to downstream node
+        self.H = np.zeros(nodes)            # height of water
+        self.Qw_change = 0                  # water discharge from glacial melt
+        self.Qw = np.zeros(nodes)           # water discharge total
+        self.glacial_sed_supply = 0         # sediment flux from glacial erosion
         
-        # set up empties
-        self.HICE = np.zeros(nodes)
-        self.Qs_down = np.zeros(nodes+1)
-        self.H = np.zeros(nodes)
-        
-        self.Qw_change = 0
-        self.Qw = np.zeros(nodes)
-        self.glacial_sed_supply = 0
-        
+        # set up on/off switches
         self.glacial_sed_supply_sw = glacial_sed_supply_sw
         self.glacial_discharge_sw = glacial_discharge_sw
     
     def get_basin_geometry(self):
+        """
+        Calculates drainage area, discharge, and channel width based on power-law relationships to distance.
+        
+        Ah      : drainage area, square meters
+        Qwi     : water discharge from power-law, not included glacial melt, cubic meters per second
+        W       : channel width, meters
+        Wv      : valley width, initially the same as channel but widens from glacial erosion, meters
+
+        Returns
+        -------
+        None.
+
+        """
         Hc = 1
         He = 1.8598
-        self.Ah = Hc * self.x**He + 0.1
+        self.Ah = Hc * self.x**He + 100000
         
         kQ = 10**-7
         eQ = 1
         self.Qwi = kQ * self.Ah**eQ
-        self.Qw_diff = np.hstack((self.Qwi[0], np.diff(self.Qwi)))
         
         kw = 5.
         eW = 0.5
         self.W = kw*self.Qwi**eW
         self.Wv = 1*self.W[:]
-        
-    def get_slope(self):
-        topo = self.sed_depth + self.z
-        self.slope = np.append([np.diff(topo)/np.diff(self.x)], [0])
-        self.slope[np.where(self.slope>0)] = 0
-      
-        
-        
-    def get_water_height(self, Qw):
-        self.H[self.slope < 0] = (self.n * Qw[self.slope<0]/self.W[self.slope<0])**.6 * (-1*self.slope[self.slope<0])**(-0.3)
-
+         
        
+    def get_sediment_in(self, dz_b, dt):
+        """
+        Calculates the amount of sediment supplied from hillslopes. Assumes hillslopes erode at the same rate as the river incises, with that incision averaged over 10,000 years. Calculates Qs_hills, the sediment supply from hillslopes.
+
+        Parameters
+        ----------
+        dz_b : 2D array of floats
+            Erosion rates at each node for the last 10 ky.
+        dt : integer
+            timestep.
+
+        Returns
+        -------
+        None.
+
+        """
+        dA = np.hstack((self.Ah[0], np.diff(self.Ah)))
+        self.Qs_hills = self.rhos * self.beta * dA * dz_b * dt
+            
+         
     def get_sediment_size(self, D0, a):
-        #starting x = max(HICE==0)
+        """
+        Calculates the size of sediment in the channel using Sternberg's law and the attrition rate a set in the input file. The initial median grain size is set in the input file, and occurs at the first fluvial node. Minimum grain size is set to 0.005 meters (5 mm). Creates self.D, an array of grain sizes.
+
+        Parameters
+        ----------
+        D0 : float
+            initial median grain size, meters
+        a : float
+            attrition rate.
+
+        Returns
+        -------
+        None.
+
+        """
         D = D0 * np.exp(-self.x*a)
         D[np.where(D<0.005)] = 0.005
-        # shift D distribution:
+        # shift D distribution for glacier (assumes glacier spits out D0 grain size):
         first_fluvial = np.min(np.where(self.HICE == 0))
         length_fluvial = self.nodes - first_fluvial
         self.D = np.zeros(self.nodes)
         self.D[first_fluvial:] = D[:length_fluvial]
     
+        
+    def get_slope(self):
+        """
+        Calculates channel slope in forward space using the topographic (bedrock + sediment) slope
+        
+        slope : water slope, m/m
+        
+        Returns
+        -------
+        None.
 
-        
-    def get_sediment_in(self, dz_b):
-        dA = np.hstack((self.Ah[0], np.diff(self.Ah)))
-        self.Qs_hills = self.rhos * self.beta * dA * dz_b
-        
+        """
+        topo = self.sed_depth + self.z
+        self.slope = np.append([np.diff(topo)/np.diff(self.x)], [0])
+        self.slope[np.where(self.slope>0)] = 0
         
         
     def get_taub(self):
+        """
+        Calculates basal shear stress in the channel, using the small angle approximation that tan(theta) = slope. Uses hydraulic radius instead of water depth. Slope is negative, so multipled by -1. Shear stress is zero where a glacier is present and where slope is 0.
+
+        Returns
+        -------
+        None.
+
+        """
         self.taub = self.rhow * self.g * (self.W * self.H / (2*self.H + self.W)) * -1 * self.slope
         self.taub[np.where(self.HICE > 0)] = 0
-        self.taub[np.where(self.slope == 0)] = 0
+        self.taub[np.where(self.slope == 0)] = 0  
         
+        
+    def get_water_height(self, Qw):
+        """
+        Calculates the height of water in the channel
+
+        Parameters
+        ----------
+        Qw : 1D array of floats
+            water discharge. Often self.Qw, but may be modified as self.Qwi.
+
+        Returns
+        -------
+        None.
+
+        """
+        self.H[self.slope < 0] = (self.n * Qw[self.slope<0]/self.W[self.slope<0])**.6 * (-1*self.slope[self.slope<0])**(-0.3)
+
+
+    def calc_bank_erosion(self, dt):
+        """
+        Calculates lateral erosion of the bank using shear stress and a lateral erodibility coefficient. If the valley has been widened previously by glaciation, then a different lateral erodibility is used, assuming banks are now alluvium not bedrock. Channel width remains the same but eroded material becomes part of the sediment flux downstream; this allows glacial debris to be mobilized during interglacials.
+
+        Parameters
+        ----------
+        dt : integer
+            timestep, years
+
+        Returns
+        -------
+        dz_w : 1D array of floats
+            change in valley width
+
+        """
+       
+        dz_w = self.kw * self.taub * dt
+        dz_w[np.where(self.Wv > self.W)] = 10*dz_w[np.where(self.Wv > self.W)]
+        dz_w[np.where(self.HICE > 0)] = 0
+        
+        return dz_w
+    
+    
+    def calc_bedrock_erosion(self, dt, depth_threshold):
+        """
+        Calculates bedrock erosion based on shear stress derivation of stream power equation. erosion is zero where sediment cover is greater than the depth threshold, and where ice is present.
+
+        Parameters
+        ----------
+        dt : integer
+            timestep, years
+        depth_threshold : float
+            depth of sediment that protects bed from erosion, meters
+
+        Returns
+        -------
+        dz_b : 1D array of floats
+            change in bedrock height, negative = erosion
+
+        """
+
+        dz_b = self.kf * self.taub * dt
      
-    def calc_sediment_erosion(self, dt):
-        """ Calculates sediment transport based on a modified Meyer Peter and Mueller equation in Wong and Parker (2006)
-        Parameters
-        ---------
-        dt = time step (years)
-        """
-        
-        def calc_mass_change():
-            # sed in:
-            self.Qs_n = self.Qs_hills + self.Qs_down[:-1] # kg/yr
-            self.Qs_down[:] = 0
-            
-            # calculate shear stresses
-            tau_star = np.zeros(self.nodes)
-            tau_star[self.HICE == 0] = self.taub[self.HICE == 0]/((self.rhos-self.rhow)*self.g*self.D[self.HICE == 0])
-            tau_diff = tau_star - self.tauc
-            tau_diff[np.where(tau_diff<0)] = 0
-
-            self.Qs_cap = self.frac_yr_transport * self.rhos * ((self.rhos-self.rhow)/self.rhow * self.g * self.D**3) ** (0.5) * 3.97 * ((tau_diff)**(3/2)) * self.W
-        
-            self.Qs_n[np.where(self.HICE>0)] = 0
-            self.Qs_cap[np.where(self.HICE > 0)] = 0
-            
-            # calculate change in sediment: aggrade over valley width, erode over channel
-            mass_change = self.Qs_cap * np.pi*10**7 - self.Qs_n
-            dz_s = (1-(1-self.L)) * mass_change/(self.Wv * self.rhos * self.dx)
-            erosion = np.where(mass_change>0)[0]
-            dz_s[erosion] = (1-(1-self.L)) * mass_change[erosion]/(self.W[erosion] * self.rhos * self.dx)
-        
-            return mass_change, dz_s
-
-        mass_change, dz_s = calc_mass_change()
-        dz_s = dz_s * dt
-
-        # calculate sediment to pass next time:
-        Qs_pass = mass_change * dt
-        Qs_pass[dz_s >= self.sed_depth] = self.Qs_n[dz_s >= self.sed_depth]
-        dz_s[dz_s >= self.sed_depth] = self.sed_depth[dz_s >= self.sed_depth]     
-
-
-        # now add in what has been eroded or deposited to get the total sed downstream
-        # change Qs_down
-        self.Qs_down[1:] = (self.rhos*dz_s * self.Wv * self.dx) + Qs_pass
-        erosion = np.where(mass_change>0)[0]
-        self.Qs_down[erosion+1] = (self.rhos * dz_s[erosion] * self.W[erosion] * self.dx) + Qs_pass[erosion]
-        self.Qs_down[self.Qs_down<0] = 0
-        
-        # update the sediment height:
-        self.sed_depth -= dz_s
-        self.sed_depth[-1] = 0
-                    
-        return dz_s
-      
-    def calc_bedrock_erosion(self, dt, depth_threshold, erosion_type=1):
-        """Calculates bedrock erosion based on stream power. Placeholder for saltation abrasion is put in. 
-        Parameters
-        ---------
-        dt = model timestep (year)
-        erosion_type = type of erosion model, 1 = stream power, 2 = saltation_abrasion
-        depth_threshold = depth of sediment to protect bed from erosion (meters)
-        """
-        
-        def stream_power(dt):
-            return self.kf * self.taub * dt
-        
-        def saltation_abrasion(dt):
-            return dz_b
-        
-        if erosion_type == 1:
-            dz_b = stream_power(dt)
-        if erosion_type == 2:
-            dz_b = saltation_abrasion(dt)
-        
         dz_b[np.where(self.sed_depth > depth_threshold)] = 0
         dz_b[np.where(self.HICE > 0)] = 0
         
         return dz_b
    
-
-    def calc_bank_erosion(self, dt):
-        """ Calculates the stream bank erosion using stream power and a lateral erodibility coefficient. Keeps track of whether valley is widened previously by glaciation to use a different erodibility.
-        Parameters
-        ---------
-        dt = time step (year)
+    
+    def calc_ELA(self, time, averageELA, amplitude, period = 100000, shape = 'sawtooth'):
         """
-        
-        dz_w = self.kw * self.taub * dt
-        dz_w[np.where(self.Wv > self.W)] = 10*dz_w[np.where(self.Wv > self.W)]
-        
-        dz_w[np.where(self.HICE > 0)] = 0
-        
-        return dz_w
+        Function calculates the ELA for each fluvial time step - this is later subdivided for the glacial timesteps, which are sub-annual, to account for annual temperature variation.
+        For reference, a 1000 m amplitude is approximately a 6 degree mean annual temperature shift (Porter, 1989) noted in Sierra Nevada glaciers (Phillips et al, 1996). A shift from 3000 to 2000 m asl ELA is used by Egholm et al (2009) in their model of glacial erosion.
 
-
-
-    def isostacy(self, dz, dHICE, dt_i):
-        """ Calculate the isostatic adjustment from ice loads and bedrock erosion. Based on Hubrechts and deWolde (1999) with explanations in Pollard and DeConto (2012) and help from Trevor Hillebrand.
         Parameters
         ----------
-        dz = erosion of bedrock by river (m)
-        dHICE = change in ice thickness (m)
-        dt_i = time step of the isostacy model (year)
-        """
+        time : integer
+            model year, year
+        averageELA : float
+            average elevation of ELA, meters
+        amplitude : float
+            range of elevations of ELA, meters
+        period : integer, optional
+            Periodicity of glacial cycles. The default is 100000.
+        shape : text, optional
+            Shape of ELA variations in glacial cycle. Options are 'sine' and 'sawtooth'. The default is 'sawtooth'.
 
-        # find equilibrium elevations
-        z_before = self.z - dz
-        
-        # changes in ice and bedrock:
-        dsurf = (self.rhoi/self.rhom - 1)*dHICE + (self.rhos/self.rhom - 1)*dz
-        z_eq = dsurf - dHICE + z_before
-        
-        
-        # define constants:
-        L = 132000.     # radius of relative stiffness, assumes 117 km thick crust, in meters. Equals (D/(rhom*g))**1/4
-        D = 10**25      # flexural rigidity in N m
-        theta = 3000.   # timescale of lithospheric response in years
-        dx = np.mean(np.diff(self.x))
-        dz_b_i = np.zeros((len(self.x),))
-        Pi = self.Wv * dx * dHICE * self.rhoi * self.g       # volumetric displacement of ice
-        Pb = self.W * dx * dz * self.rhos * self.g      # volumetric displacement of bedrock
-        for k in range(0, self.nodes):
-            # for each node, calculate the displacement from all the other nodes:
-            r = np.absolute(self.x-self.x[k])
-            Wp = (Pi + Pb)*L**2/(2*np.pi*D) * kei(r/L)
-            Wb = np.sum(Wp)
-            dz_b_i[k] = -1/theta * (self.z[k]-z_eq[k]+Wb) * dt_i
+        Returns
+        -------
+        None.
 
-        return (dz_b_i)     
-    
-
-    def get_ELA(self, time, averageELA, amplitude, period = 100000, shape = 'sawtooth'):
-        """ Function calculates the ELA for each time step 
-        Parameters:
-        ---------
-        time = model year (years)
-        dt = time step of model (years)
-        averageELA = average elevation of ELA (meters)
-        amplitude = variation in ELA (meters)
-        period = how often glacial cycles occur (years)
-        shape = shape of ela curve - sine or sawtooth
         """
     
-    # ELA OPTION 1: sinusoidal, equal time in glacial and interglacial    
-    # calculate ELA elevation based on time variation sinusoid. 1000 m amplitude is approximately a 6 degree mean annual temperature shift (Porter, 1989), noted in Sierra Nevada glaciers (Phillips et al, 1996).
+        # ELA OPTION 1: sinusoidal, equal time coming in and out of glacials/interglacials    
         if shape == 'sine':
             ELA = -amplitude/2*np.cos(2*np.pi*time/period)+averageELA 
 
-    # ELA OPTION 2: sawtooth, 10k rapid warming and 90k slow cooling
-    # total change in temperature is 6 degrees based on Porter, 1989, corresponding to 1000 m amplitude in ELA.
+        # ELA OPTION 2: sawtooth, 10k rapid warming and 90k slow cooling - starts at lowest temperature/ELA
         if shape == 'sawtooth':
             cycle_i = (time)%period
             if cycle_i <= 10000: # start with rapid warming 
-                ELA = amplitude/10000*cycle_i + (averageELA-amplitude/2) #create linear equation with slope of 1000m/10,000 years and a value of 2000 at 5,000 years
-            else:
+                ELA = amplitude/10000*cycle_i + (averageELA-amplitude/2)
+            else: # slow cooling over the other 90,000 years
                 ELA = -amplitude/90000*cycle_i + (averageELA+amplitude/2 + amplitude/9)
                 
         return ELA
-        
-
-    def get_glacial_erosion(self, ELA2, dt_g):
-        """ Longitudinal glacier evolution following Macgregor et al., 2000 (Geology) formulation, with updates to the quarrying rule from Iversion (2012).
-        
-        Parameters:
-        ----------
-        ELA2 = ELA incorporating both the annual and glacial cycle temperature swings
-        dt_g = time step for glaciers, in years
-        
+    
+    
+    def calc_glacial_erosion(self, ELA2, dt_g):
         """
-        xcells = self.nodes
+        Longitudinal glacier evolution following Macgregor et al., 2000 (Geology) formulation, with updates to the quarrying rule from Iversion (2012).
 
-        # pre-allocate
-        q = np.zeros(xcells)
-        H_ICE=np.zeros(xcells)
+        Parameters
+        ----------
+        ELA2 : float
+            elevation of the ELA, taking into account large glacial cycles and interannual temperature changes, meters
+        dt_g : float
+            glacier timesteps, should be ~0.01 to capture interannual variability, years
+
+        Returns
+        -------
+        Eg : 1D array of floats
+            glacial erosion of bedrock, meters
+        dHdt : 1D array of floats
+            change in ice thickness, meters
+
+        """
+        # pre-allocate empty variables
+        q = np.zeros(self.nodes)
+        H_ICE=np.zeros(self.nodes)
         
         topoICE = self.z+self.HICE
 
+        # instanstiate ice thickness if not there but above ela (otherwise can't grow)
         if self.z[0] > ELA2 and self.HICE[0] == 0:
             self.HICE[0] = 1.
-        #annual mass balance from eq 19 in Oerlemans, 1984 - this is the snowfall and melt contributions?
+            
+            
+        #annual mass balance from eq 19 in Oerlemans, 1984 
         b = self.alpha*(topoICE-ELA2)
         b[np.where(b>2)] = 2
         b[np.where(self.HICE==0)] = 0
@@ -294,7 +342,6 @@ class stream(object):
         self.HICE[np.where(self.HICE<0)] = 0
         
         #glacier geometry
-        # slopeICE[0] = (topoICE[0] - topoICE[1])/self.dx
         H_ICE[0] = self.HICE[0]
         H_ICE[1:] = (self.HICE[:-1] + self.HICE[1:])/2
         W_bottom = self.Wv  #width at base of ice
@@ -323,16 +370,16 @@ class stream(object):
         # Ice deformation velocity in m/yr
         Ud = 2/5*self.A*H_ICE[:-1]*taubICE**3
         
-        # erosion rule, proportional to sliding velocity. No erosion at last node. Lots of checks for where there is no ice and Us is either Inf or NaN. 
-        #erosion = np.append([self.C2 * Us], [0])
         # erosion rule of quarrying from Iverson, 2012 (in this case all eroded material is bedload), using a Gaussian distribution of fracture spacing in a heterogenous bedrock:
         erosion = np.append([self.C2 * Us**0.46], [0])/1000
+        
+        # erosion checks for unusual situations
         erosion[np.isnan(erosion)] = 0
         erosion[np.isinf(erosion)] = 0
         erosion[np.where(erosion<0)] = 0
         
-        
-        # ice flux at each node
+        #### UPDATE WATER - ICE THICKNESS AND WATER DISCHARGE
+        # ice flux at each node and updates to glacier height
         q[0] = 0
         q[1:] = W_avg[:-1] * H_ICE[:-1] * (Us + Ud)
         dqdx = (q[1:] - q[:-1])/self.dx
@@ -347,9 +394,9 @@ class stream(object):
             water_change = self.rhoi/self.rhow * mass_change * -1  #change the sign because a negative mass_change is a positive Qw
             Qw_change = water_change/(np.pi*10**7) * dt_g
             self.Qw_change += Qw_change 
-            
-            
-        #Erode the bedrock vertically and laterally
+        
+        #### UPDATE BEDROCK - EROSION AND SEDIMENT SUPPLY
+        # Erode the bedrock vertically and laterally
         self.z -= erosion*dt_g
         erosion_valley = erosion * np.cos(np.deg2rad(60)) # based on a trapezoid angle of 30, find horizontal component of erosion into a 30 degree valley slope
         self.Wv += erosion_valley*dt_g
@@ -362,72 +409,258 @@ class stream(object):
         Ev = erosion_valley*dt_g
         mean_E = np.mean(Eg+Ev)
         if self.glacial_sed_supply_sw == True:
+            # sum the amount of fluvial sediment pushed ('swept') downstream:
             broomvalue = sum(np.where(self.HICE>0, self.sed_depth*self.Wv*self.dx, 0)) * (1-self.L)
-            # needs to be in kg:
+            
+            # convert to be in kg and add in the eroded material, also converted to kg:
             if np.sum(self.HICE) == 0:
                 glacial_sed_supply = 0
             else:
                 glacial_sed_supply = self.rhos * (mean_E * self.dx * np.mean(self.Wv[self.HICE > 0]) + broomvalue * (1-self.L))
-            self.glacial_sed_supply += glacial_sed_supply    
-        # get rid of sediment where there is ice
+            
+            self.glacial_sed_supply += glacial_sed_supply  # update this value - since dt_g is smaller than dt, we need to do this several times before adding back to the fluvial model.
+            
+        # update to get rid of sediment where there is ice, since it has now been swept downstream
         self.sed_depth[np.where(self.HICE>0)] = 0
 
-
-
-        
         return (Eg, dHdt)
+    
+    
+    def calc_isostacy(self, dz, dHICE, dt_i):
+        """
+        Calculate the isostatic adjustment from ice loads and bedrock erosion. Based on Hubrechts and deWolde (1999) with explanations in Pollard and DeConto (2012) and help from Trevor Hillebrand.
 
-    def run_one_fluvial(self, dz_b_save, backgroundU, depth_threshold, dt):
-        """ runs one time step of fluvial erosion 
         Parameters
         ----------
-        dz_b_save = last 10ky of bedrock erosion, in m/yr
-        backgroundU = uplift rate, in m/yr
-        depth_thresold = depth at which erosion is inhibited, in m
-        dt = model timestep, years
+        dz : 1D array, float
+            change in bedrock thickness from river and glacier erosion, meters
+        dHICE : 1D array, float
+            change in ice height, meters.
+        dt_i : float
+            time step of the isostacy model, years
+
+        Returns
+        -------
+        dz_b_i : 1D array, float
+            change in bedrock elevation from isostaticy adjustment
+
+        """
+
+        # STEP 1: Find isostatic equilibrium elevations
+        z_before = self.z - dz
+        # changes in ice and bedrock:
+        dsurf = (self.rhoi/self.rhom - 1)*dHICE + (self.rhos/self.rhom - 1)*dz
+        z_eq = dsurf - dHICE + z_before
+        
+        
+        # STEP 2: calculate how much isostatic adjustment occurs in timeframe
+        
+        #define constants:
+        L = 132000.     # radius of relative stiffness, assumes 117 km thick crust, in meters. Equals (D/(rhom*g))**1/4
+        D = 10**25      # flexural rigidity in N m
+        theta = 3000.   # timescale of lithospheric response in years
+        dz_b_i = np.zeros((len(self.x),))  # empty array to be filled
+        
+        # calculate displacements
+        Pi = self.Wv * self.dx * dHICE * self.rhoi * self.g       # volumetric displacement of ice
+        Pb = self.W * self.dx * dz * self.rhos * self.g      # volumetric displacement of bedrock
+        for k in range(0, self.nodes):
+            # for each node, calculate the displacement from all the other nodes:
+            r = np.absolute(self.x-self.x[k])
+            Wp = (Pi + Pb)*L**2/(2*np.pi*D) * kei(r/L)
+            Wb = np.sum(Wp)
+            dz_b_i[k] = -1/theta * (self.z[k]-z_eq[k]+Wb) * dt_i
+
+        return dz_b_i  
+    
+    
+    def calc_sediment_erosion(self, dt):
+        """
+        Calculates sediment transport using a modified Meyer-Peter and Mueller equation in Wong and Parker (2006)
+
+        Parameters
+        ----------
+        dt : integer
+            timestep, years
+
+        Returns
+        -------
+        dz_s : 1d array of floats
+            change in sediment thickness, positive = erosion
+
         """
         
+        # calculate shear stress products, making exceptions for where ice is present
+        tau_star = np.zeros(self.nodes)
+        tau_star[self.HICE == 0] = self.taub[self.HICE == 0]/((self.rhos-self.rhow)*self.g*self.D[self.HICE == 0])
+        tau_diff = tau_star - self.tauc
+        tau_diff[np.where(tau_diff<0)] = 0
         
+        # calculate sediment supply and capacity, set at 0 where ice is present
+        self.Qs_n = self.Qs_hills + self.Qs_down[:-1]
+        self.Qs_cap = self.frac_yr_transport * self.rhos * ((self.rhos-self.rhow)/self.rhow * self.g * self.D**3) ** (0.5) * 3.97 * ((tau_diff)**(3/2)) * self.W
+        self.Qs_n[np.where(self.HICE>0)] = 0
+        self.Qs_cap[np.where(self.HICE > 0)] = 0
+        
+        # calculate change in elevation based on sediment capacity and supply difference; sediment eroded comes from the channel, and sediment deposited is spread over valley
+        mass_change = dt * self.Qs_cap * np.pi*10**7 - self.Qs_n
+        dz_s = (1-(1-self.L)) * mass_change/(self.Wv * self.rhos * self.dx)
+        erosion = np.where(mass_change>0)[0]
+        dz_s[erosion] = (1-(1-self.L)) * mass_change[erosion]/(self.W[erosion] * self.rhos * self.dx)
+        
+        # calculate sediment passed to next node
+        Qs_pass = mass_change
+        erodes_all = dz_s - self.sed_depth
+        eroding_all = np.where((erodes_all > 0) & (self.sed_depth > 0))[0]
+        dz_s[eroding_all] = self.sed_depth[eroding_all]
+        Qs_pass[eroding_all] = self.Qs_n[eroding_all]
+        dz_s[np.where(dz_s > self.sed_depth)] = self.sed_depth[np.where(dz_s > self.sed_depth)]        
+
+        # now add in what has been eroded or deposited to get the total sed downstream and update Qs_down for next timestep
+        self.Qs_down[1:] = (self.rhos*dz_s * self.Wv * self.dx) + Qs_pass
+        self.Qs_down[erosion+1] = (self.rhos * dz_s[erosion] * self.W[erosion] * self.dx) + Qs_pass[erosion]
+        self.Qs_down[np.where(self.Qs_down<0)] = 0
+        
+        # update the sediment height:
+        self.sed_depth -= dz_s
+        self.sed_depth[-1] = 0
+                    
+        return dz_s
+      
+
+    def run_one_fluvial(self, dz_b_save, backgroundU, depth_threshold, dt):
+        """
+        Runs one time step of fluvial erosion with sediment transport and a depth threshold.
+
+        Parameters
+        ----------
+        dz_b_save : 2D array, float
+            10 ky saved history of erosion rates, meters per year.
+        backgroundU : float
+            uplift rate, meters per year.
+        depth_threshold : float
+            alluvium depth that prevents erosion, meters.
+        dt : integer
+            timestep, years
+
+        Returns
+        -------
+        dz_s : 1D array, floats
+            change in sediment height, meters. Positive is erosion
+        dz_b : 1D array, floats
+            change in bedrock height, meters. Negative is erosion.
+        dz_w : 1D array, floats
+            lateral movement of channel, meters. Positive is erosion
+
+        """
+
         sed_supply = np.mean(dz_b_save, axis=1)
-        sed_supply[np.where(sed_supply<backgroundU)] = backgroundU
-        self.get_sediment_in(sed_supply)
+        self.get_sediment_in(sed_supply, dt)
         
-        # add glacial stuff
+        # add glacial inputs from glacial erosion
         first_fluvial = np.min(np.where(self.HICE == 0))
-        self.Qs_hills[first_fluvial] += self.glacial_sed_supply/self.Wv[first_fluvial]*self.W[first_fluvial] # spread glacial pushed sed across valley and only transport that in channel.
+        self.Qs_hills[first_fluvial] += self.glacial_sed_supply/self.Wv[first_fluvial]*self.W[first_fluvial] # spread glacial pushed sed across valley and only transport that in channel. 
         self.Qw[:first_fluvial] = 0
         self.Qw[first_fluvial:] = self.Qw_change + self.Qwi[first_fluvial:]
         
+        # update river geometries to prep for transport calculations
         self.get_slope()
         self.get_water_height(self.Qw)
         self.get_taub()
         
-        dz_s = self.calc_sediment_erosion(dt)
-        
-        
-        dz_b = self.calc_bedrock_erosion(depth_threshold, erosion_type = 1)
-        self.z += dz_b * dt
+        # calculate changes to sediment depth, bedrock erosion, and bank erosion
+        dz_s = self.calc_sediment_erosion(dt) # updates self.sed_depth w/in function
+        dz_b = self.calc_bedrock_erosion(dt, depth_threshold)
+        self.z += dz_b
         dz_w = self.calc_bank_erosion(dt)
         
-        ## convert dz to values
+        ## convert bank dz to values and update sediment supply
         bank_erosion = dz_w * self.H * self.dx * self.rhos
         self.Qs_down[1:] += bank_erosion
 
-        
         return dz_s, dz_b, dz_w
+
+
+
+    def run_one_fluvial_nosed(self, backgroundU, dt):
+        """
+        Runs one timestep of fluvial erosion without sediment transport or a depth threshold.
+
+        Parameters
+        ----------
+        backgroundU : float
+            rock uplift rate, meters per year.
+        dt : integer
+            timestep in years.
+
+        Returns
+        -------
+        dz_b : 1D array of floats
+            bedrock erosion, negative is erosion.
+
+        """
+
+        # add glacial inputs from glacial erosion
+        first_fluvial = np.min(np.where(self.HICE == 0))
+        self.Qw[:first_fluvial] = 0
+        self.Qw[first_fluvial:] = self.Qw_change + self.Qwi[first_fluvial:]
+
+        # update river geometries to prep for transport calculations
+        self.get_slope()
+        self.get_water_height(self.Qw)
+        self.get_taub()
         
+        # calculate change to bedrock erosion
+        depth_threshold = 0.2 # no sediment anyways, so value doesn't matter
+        dz_b = self.calc_bedrock_erosion(dt, depth_threshold)
+        self.z += dz_b
+
+        return dz_b  
+
+     
+        
+    
     def run_one_glacial(self, analysis_time, averageELA, amplitude, dt_g, dt):
+        """
+        Runs one time step of glacial erosion
+
+        Parameters
+        ----------
+        analysis_time : integer
+            year in the model run, year
+        averageELA : integer
+            elevation of average ELA, meters
+        amplitude : integer
+            range of ELA, meters
+        dt_g : float
+            glacier timestep, 0.01 or less, years
+        dt : integer
+            model timestep
+
+        Returns
+        -------
+        Eg_total : 1D array of floats
+            bedrock erosion from glaciation for one model timestep, meters
+        ELA : float
+            elevation of ELA, meters
+
+        """
+        # set empty variables to track. time2 represents time within the larger model timestep
         time2 = 0
-        Eg_total = 0
+        Eg_total = np.zeros(self.nodes)
         self.Qw_change = 0
         self.glacial_sed_supply = 0
         
         
         while time2 in range(0, dt):
-            ELA = self.get_ELA(analysis_time, averageELA, amplitude, period = 100000, shape = 'sawtooth')
+            ELA = self.calc_ELA(analysis_time, averageELA, amplitude, period = 100000, shape = 'sawtooth')
             ELA_annual = 800 * np.sin(2*np.pi*time2) + ELA
-            (Eg, dHdt) = self.get_glacial_erosion(ELA_annual, dt_g)
+            Eg, dHdt = self.calc_glacial_erosion(ELA_annual, dt_g)
             Eg_total += Eg
             time2 += dt_g
             
         return Eg_total, ELA
+    
+
+     
+
