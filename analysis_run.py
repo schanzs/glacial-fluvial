@@ -7,7 +7,7 @@ Created on Fri Mar  1 13:45:55 2019
 """
 
 """ 
-This code is part 2 of 2 that simulates coupled glacial fluvial erosion in a 1-d finite difference grid. This script applied glacial erosion to a pre-determined landscape. To make the pre-landscape, you can upload elevation, sediment depth, and erosion rate data or use the spin_up_run.py script to simulate a landscape.
+This code is part 2 of 2 that simulates coupled glacial fluvial erosion in a 1-d finite difference grid. This script applies glacial erosion to a pre-determined landscape. To make the pre-landscape, you can upload elevation, sediment depth, and erosion rate data or use the spin_up_run.py script to simulate a landscape.
 
 In this script, glacial erosion, bedrock erosion, sediment transport, and isostatic rebound are imposed. The glacial erosion model follows MacGregor et al, 2000 (Geology) with updates for an abrasion-erosion model of Iverson (2012). Bedrock erosion is from shear stress derivation of the stream power equation, with a sediment cover effect using a depth threshold. Sediment is moved via a Meyer-Peter and Mueller equation, modified by Wong and Parker (2006). Sediment supply is based on the 10 ky average of erosion rates. Isostacy is calculated using the methods outlined in Pollard and DeConto (2012), following Huybrechts and de Wolde (1999). 
 
@@ -69,9 +69,9 @@ river.get_sediment_size(D0, a)
 k10 = int(10000/dt)   #parameter to update erosion rates for the 10ky average for sed supply
 
 ### IMPORT MODEL SPIN UP ##################################
-river.z = np.genfromtxt('z_endspin.txt')
-river.sed_depth = np.genfromtxt('sed_endspin.txt')
-dz_b_save = np.genfromtxt('dzb_endspin.txt')
+river.z = np.genfromtxt('z_endspin.txt') # text file with 1 column and n rows, where n = nodes
+river.sed_depth = np.genfromtxt('sed_endspin.txt') # text file with 1 column and n rows, where n = nodes
+dz_b_save = np.genfromtxt('dzb_endspin.txt') # text file with k10 columns and n rows, where n = nodes, and k10 = 10,000 / dt - records 10,000 year history of fluvial erosion
 
 os.chdir('analysis')
           
@@ -81,7 +81,7 @@ amplitude = 1000 # meters
 
 ### RUN MODEL WITH GLACIERS #############################
 dt = int(dt)
-run_time = 100000 #years
+run_time = 800000 #years
 time=0
 
 # create empty variables

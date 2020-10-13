@@ -11,7 +11,7 @@ sediment_transport = True      # Boolean switch to turn sediment transport calcu
 
 """ Time """
 dt = 1                          # model timestep, years
-dt_g = 0.01                     # model timestep for glacial erosion. Through trial and error, found 0.01 is good to capture annual ELA variability, years
+dt_g = 0.1                     # model timestep for glacial erosion. Through trial and error, found 0.01 is good to capture annual ELA variability, years
 dt_i = 10.                      # model timestep to calculate isostatic adjustments, years
 
 """ Model set up """
