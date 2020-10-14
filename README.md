@@ -1,5 +1,25 @@
 # glacial-fluvial
-This 1-D finite difference model simulates erosion of a mixed alluviul bedrock river by an overriding glacier and stream power, with feedbacks between the two erosional regimes in the form of valley widening and sediment storage; glacial supply to sediment loads; and meltwater.
+## clever model names? long profile erosion by glaciers, streams and sediment (e, g, st, se?)
+
+the following sections correspond to review criteria from JOSS.
+
+### Statement of need
+This 1-D finite difference model simulates erosion of a mixed alluviul bedrock river by an overriding glacier and stream power, with feedbacks between the two erosional regimes in the form of valley widening and sediment storage; glacial supply to sediment loads; and meltwater. The model couples two previously distinct erosion regimes, and is intended for geomorphologists and geoscientists interested in the development of topography during glacial-interglacial cycles.
+
+### Installation instructions
+To use this software, download the .py files. The code was developed using Python3, and can be run as a Python script in your preferred method. Inputs are specified in inputs.py. If you do not have an initial topography, use spin_up_run.py to create one. Finally, analysis_run.py is run to apply glaciation onto your input topography.
+
+### Example usage
+
+
+### API documentation
+
+### Community guidelines
+How should people proceed if they want to contribute to the software, report issues or problems, or seek support?
+
+## Functionality & tests
+
+
 
 The model works through:
 1) altering inputs in inputs.py that include model set up in nodes, dx, dt, uplift rate, grain size, etc as well as switches to turn on/off sediment supply, glacial-fluvial feedbacks, and isostatic adjustments.
