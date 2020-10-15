@@ -1,5 +1,5 @@
 # glacial-fluvial
-## clever model names? long profile erosion by glaciers, streams and sediment (e, g, st, se?)
+## clever model names? RanGES: River and Glacial Erosion with Sediment
 
 the following sections correspond to review criteria from JOSS.
 
