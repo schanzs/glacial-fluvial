@@ -14,10 +14,10 @@ To use this software, download the .py files. The code was developed using Pytho
 
 ### API documentation
 
-### Community guidelines
-How should people proceed if they want to contribute to the software, report issues or problems, or seek support?
+### Contributing and bug reports
+Submit any bug reports or contributions to our issue tracker (https://github.com/schanzs/glacial-fluvial/issues). For substantial changes, please fork this repository and submit a pull request for review.
 
-## Functionality & tests
+### Functionality & tests
 
 
 
