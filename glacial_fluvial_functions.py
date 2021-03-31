@@ -40,7 +40,8 @@ class stream(object):
     n = 0.04            # Manning's roughness
     frac_yr_transport = 0.05  # fraction of the year experiencing erosion
     L = 0.2             # lambda, porosity of bedload
-    kf = -10**-5        # vertical erosion coefficient
+    kf = -5e-5        # vertical erosion coefficient
+    # kf = -3e-3   # from Yanites, 2018
     kw = -7.3*kf        # lateral bedrock erosion coefficient, 7.3 times vertical from Finnegan and Dietrich, 2012
     A = 2.1*10e-18      # Arrhenius constant
     C1 = 0.0012         # glacial sliding coefficient from MacGregor et al (2000)
@@ -263,7 +264,101 @@ class stream(object):
         
         return dz_b
    
+    def calc_bedrock_erosion_sklardietrich(self, dt):
+        """
+        Calculates bedrock erosion based on saltation-abrasion via Sklar and Dietrich (2004).
+
+        Parameters
+        ----------
+        dt : integer
+            timestep, years
+        
+        Returns
+        -------
+        dz_b : 1D array of floats
+            change in bedrock height, negative = erosion, meters
+
+        """
+        self.F = np.zeros(self.nodes)
+        # erosion factors from Sklar and Dietrich (2004)
+        validF = np.where(self.Qs_cap != 0)
+        self.F[validF] = 1-self.Qs_n[validF]/(np.pi*10**7*dt*self.Qs_cap[validF])
+        self.F[self.F < 0] = 0
+        
+        dz_b = self.kf * self.taub * self.F * dt
+        dz_b[self.HICE > 0] = 0
+   
+        return dz_b
+        
+    def calc_bedrock_erosion_turowski(self, dt):
+        """
+        Calculates bedrock erosion based on a cover effect defined by Turowski et al, 2007 in which erosion is modulated by a factor exp(-alpha*Qs/Qt) - assuming alpha = 1
+
+        Parameters
+        ----------
+        dt : integer
+            timestep, years
+        
+        Returns
+        -------
+        dz_b : 1D array of floats
+            change in bedrock height, negative = erosion, meters
+
+        """
+        
+        self.Ra = np.zeros(self.nodes)
+        Qs_Qcap = np.zeros(self.nodes)
+        valid_ratio = np.where(self.Qs_cap != 0)
+        Qs_Qcap[valid_ratio] = self.Qs_n[valid_ratio]/(np.pi*10**7 * dt * self.Qs_cap[valid_ratio])
+        
+        if ("self.old_Ra" in globals()) == False:
+            # first time step, must use steady state
+            self.Ra = np.exp(-Qs_Qcap)
+            
+        else:
+            # not the first timestep
+            
+            for k in range(self.nodes):
+                if np.pi*10**7 * dt * self.Qs_cap[k] > self.Qs_n[k]:
+                # no storage
+                    self.Ra[k] = np.exp(-Qs_Qcap[k])
+                elif self.Qs_cap[k] == 0:
+                    self.Ra[k] = np.exp(-Qs_Qcap[k])
+                else:
+                # storage over supply
+                    self.Ra[k] = -self.old_Ra[k] * (1-(Qs_Qcap[k] - self.old_Qs_Qcap[k]))
+
+
+        dz_b = self.kf * self.taub * self.Ra * dt
+        dz_b[self.HICE > 0] = 0
+        
+        self.old_Ra = 1*self.Ra
+        self.old_Qs_Qcap = 1*Qs_Qcap
+        
+        return dz_b   
     
+    def calc_bedrock_erosion_shobe(self, h_star, dt):
+        """
+        Calculates bedrock erosion based on a cover effect defined by exp(-h/h*) where h is sediment depth and h* is a threshold sediment depth, as explained in Shobe et al, 2017, SPACE model
+
+        Parameters
+        ----------
+        dt : integer
+            timestep, years
+        
+        Returns
+        -------
+        dz_b : 1D array of floats
+            change in bedrock height, negative = erosion, meters
+
+        """
+
+        self.h_ratio = self.sed_depth/h_star
+        dz_b = self.kf * self.taub * np.exp(-self.h_ratio) * dt
+        dz_b[self.HICE > 0] = 0
+   
+        return dz_b   
+
     def calc_ELA(self, time, averageELA, amplitude, period = 100000, shape = 'sawtooth'):
         """
         Function calculates the ELA for each fluvial time step.
@@ -303,6 +398,29 @@ class stream(object):
                 
         return ELA
     
+    def calc_ELA_vostok(self, yrBP, deltaC, analysistime, ELA_pinedale, ELA_now, dt):
+        """ Calculate the ELA on an annual basis 
+        """
+        # trim to analysis time:
+        deltaC = deltaC[yrBP<analysistime]
+        yrBP = yrBP[yrBP<analysistime]
+        
+        # find linear relationship between deltaC and ELA
+        deltaC_pinedale = np.min(deltaC)
+        intercept = ELA_now
+        if int(deltaC_pinedale) == 0:
+            ELA = np.ones(len(deltaC))*ELA_now
+        else:
+            slope = (ELA_pinedale - ELA_now) / (deltaC_pinedale - 0)
+            ELA = intercept + deltaC*slope
+        
+        ELAyr = analysistime - yrBP
+        
+        # use spline interpolation to get new ELA/ELAyr pairs:
+        years = np.arange(0, analysistime, dt)
+        newELA = np.interp(years, ELAyr[::-1], ELA[::-1])
+        
+        return newELA
     
     def calc_glacial_erosion(self, ELA2, dt_g):
         """
@@ -528,7 +646,7 @@ class stream(object):
         return dz_s
       
 
-    def run_one_fluvial(self, dz_b_save, backgroundU, depth_threshold, dt):
+    def run_one_fluvial(self, dz_b_save, backgroundU, depth_threshold, dt, erosion_type = 'depth_threshold'):
         """
         Runs one time step of fluvial erosion with sediment transport and a depth threshold.
 
@@ -542,6 +660,12 @@ class stream(object):
             alluvium depth that prevents erosion, meters.
         dt : integer
             timestep, years
+        erosion_type: text
+            Specifies the alluvial cover effect model to be used
+            'depth threshold' is binary yes or no erosion
+            'SklarDietrich' uses 1-Qs/Qt from their 2004 paper
+            'Turowski' uses exp(Qs/Qt) from their 2007 paper where alpha = 1
+            'Shobe' uses exp(h/h*) from their 2017 paper where h* = depth_threshold, set at 1 meter
 
         Returns
         -------
@@ -570,7 +694,15 @@ class stream(object):
         
         # calculate changes to sediment depth, bedrock erosion, and bank erosion
         dz_s = self.calc_sediment_erosion(dt) # updates self.sed_depth w/in function
-        dz_b = self.calc_bedrock_erosion(dt, depth_threshold)
+        if erosion_type == 'SklarDietrich': 
+            dz_b = self.calc_bedrock_erosion_sklardietrich(dt)
+        elif erosion_type == 'Turowski':
+            dz_b = self.calc_bedrock_erosion_turowski(dt)
+        elif erosion_type == 'Shobe':
+            dz_b = self.calc_bedrock_erosion_shobe(depth_threshold, dt)
+        else:
+            dz_b = self.calc_bedrock_erosion(dt, depth_threshold)
+        
         self.z += dz_b
         dz_w = self.calc_bank_erosion(dt)
         
