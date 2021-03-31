@@ -99,7 +99,7 @@ while time in range(run_time):
     #### FLUVIAL EROSION ######################################################
     river.get_sediment_size(D0, a) # updated based on glacial extent
     if sediment_transport == True:
-        dz_s, dz_b, dz_w = river.run_one_fluvial(dz_b_save, backgroundU, erosion_depth_threshold, dt)   
+        dz_s, dz_b, dz_w = river.run_one_fluvial(dz_b_save, backgroundU, erosion_depth_threshold, dt, erosion_type = 'Turowski')
     else:
         dz_b = river.run_one_fluvial_nosed(backgroundU, dt)
     dz_b_foricalc += dz_b
