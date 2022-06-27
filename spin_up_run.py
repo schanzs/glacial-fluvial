@@ -30,56 +30,74 @@ from inputs import *
 PARAMETERS imported from inputs.py are:
 
     MODEL VARIABLES
-        backgroundU : m/yr
-        D0          : m
+        backgroundU : float, m/yr
+        D0          : float, m
+        a           : float, m/m
+        C2          : float, dimensionaless
 
     MODEL TYPE ON/OFF SWITCHES
         glacial_discharge_sw    : boolean
         glacial_sed_supply_sw   : boolean
         isostacy                : boolean
         sediment_transport      : boolean
+        glaciated_sw              : boolean
         
     TIME
-        dt      : fluvial erosion timestep, years
-        dt_g    : glacial erosion timestep, years - 0.01 at least
-        dt_i    : isostacy calculation recurrence, years
+        dt      : float, fluvial erosion timestep, years
+        dt_g    : float, glacial erosion timestep, years - 0.01 at least
+        dt_i    : float, isostacy calculation recurrence, years
         
     MODEL SET UP
-        dx                          : node spacing, meters
-        nodes                       : number of nodes
-        initial_slope               : initial slope of profile, overriden in block model
-        initial_sed_depth           : thickness of bedload, meters
-        a                           : sediment attrition rate
-        erosion_depth_threshold     : sediment cover that halts erosion, meters
+        dx                          : float, node spacing, meters
+        nodes                       : integer, number of nodes
+        initial_slope               : float, initial slope of profile, overriden in block model
+        initial_sed_depth           : float, thickness of bedload, meters
+        erosion_depth_threshold     : float, sediment cover that halts erosion, meters
 """
 
-## INSTANTIATE MODEL
+#####################################
+#                                   #
+#    STEP 1: Instantiate model      #
+#    and set up variables/params    #
+#                                   #
+#####################################
+
+## INSTANTIATE MODEL ###################################
 river = stream(dx, nodes, initial_slope, initial_sed_depth, glacial_sed_supply_sw, glacial_discharge_sw, sediment_transport)
 river.get_basin_geometry()
 river.get_sediment_size(D0, a)
 
-## SET UP EMPTY VARIABLES FOR SEDIMENT SUPPLY
+## SET UP EMPTY VARIABLES FOR SEDIMENT SUPPLY ###########
 k10 = int(10000/dt)
 dz_b_save = np.zeros((nodes, k10))
 
-## SET PLATEAU TOPOGRAPHY
+## SET PLATEAU TOPOGRAPHY ###############################
+""" Can override, optionally. This ensures that some topography is above the 2500 m ela, if the spin up run is too short (steady state/graded should be reached in the 5 Ma default spin up)"""
 river.z[:-1] = 3000
 
-### RUN MODEL SPIN UP ##################################
+##################################
+#                                #
+#     STEP 2: Run the model      #
+#                                #
+##################################
+
+### SET UP TIME ##########################################
 time = 0
 dt = int(dt)
 dz_b_foricalc = np.zeros(nodes)
 
+### LOOP THROUGH TIME & UPDATE TOPOGRAPHY ################
 while time < 5000000:
     time += dt
     
-    ### FLUVIAL EROSION
+    ### FLUVIAL EROSION ###################################
     if sediment_transport == True:
+        """ Change erosion type here depending on the model you want to run. Options are: SklarDietrich, Turowski, Shobe, if no others are offered, defaults to depth threshold"""
         dz_s, dz_b, dz_w = river.run_one_fluvial(dz_b_save, backgroundU, erosion_depth_threshold, dt, erosion_type = 'Turowski')
     else:
         dz_b = river.run_one_fluvial_nosed(backgroundU, dt)
  
-    ### ISOSTASY
+    ### ISOSTASY ##########################################
     if isostacy_sw == True:
         dz_b_foricalc += dz_b
         if time%dt_i == 0:
@@ -87,10 +105,10 @@ while time < 5000000:
             river.z += dz_b_i
             dz_b_foricalc[:] = 0
     
-    ### UPDATE DZ_B FOR SEDIMENT SUPPLY       
+    ### UPDATE DZ_B FOR SEDIMENT SUPPLY    #################    
     dz_b_save[:,int((time/dt)%k10)] = -dz_b/dt    #positive values are incision
     
-    ### UPDATE FOR UPLIFT
+    ### UPDATE FOR UPLIFT ###################################
     river.z += backgroundU*dt
     river.z[-1] = 0
     river.sed_depth[-1] = 0

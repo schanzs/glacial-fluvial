@@ -32,77 +32,99 @@ from inputs import *
 PARAMETERS imported from inputs.py are:
 
     MODEL VARIABLES
-        backgroundU : m/yr
-        D0          : m
+        backgroundU : float, m/yr
+        D0          : float, m
+        a           : float, m/m
+        C2          : float, dimensionaless
 
     MODEL TYPE ON/OFF SWITCHES
         glacial_discharge_sw    : boolean
         glacial_sed_supply_sw   : boolean
         isostacy                : boolean
         sediment_transport      : boolean
+        glaciated_sw              : boolean
         
     TIME
-        dt      : fluvial erosion timestep, years
-        dt_g    : glacial erosion timestep, years - 0.01 at least
-        dt_i    : isostacy calculation recurrence, years
+        dt      : float, fluvial erosion timestep, years
+        dt_g    : float, glacial erosion timestep, years - 0.01 at least
+        dt_i    : float, isostacy calculation recurrence, years
         
     MODEL SET UP
-        dx                          : node spacing, meters
-        nodes                       : number of nodes
-        initial_slope               : initial slope of profile, overriden in block model
-        initial_sed_depth           : thickness of bedload, meters
-        a                           : sediment attrition rate
-        erosion_depth_threshold     : sediment cover that halts erosion, meters
+        dx                          : float, node spacing, meters
+        nodes                       : integer, number of nodes
+        initial_slope               : float, initial slope of profile, overriden in block model
+        initial_sed_depth           : float, thickness of bedload, meters
+        erosion_depth_threshold     : float, sediment cover that halts erosion, meters
 """
 
+#####################################
+#                                   #
+#    STEP 1: Instantiate model      #
+#    and set up variables/params    #
+#                                   #
+#####################################
 
-### CREATE NEW FOLDER TO SAVE OUTPUTS
+### CREATE NEW FOLDER TO SAVE OUTPUTS #####################
 path = os.getcwd()
 new_dir = path + '/analysis'
 os.mkdir(new_dir)
 
-
-## INSTANTIATE MODEL
+### INSTANTIATE MODEL #####################################
 river = stream(dx, nodes, initial_slope, initial_sed_depth, glacial_sed_supply_sw, glacial_discharge_sw, sediment_transport)
 river.get_basin_geometry()
 river.get_sediment_size(D0, a)
+river.C2 = C2
 k10 = int(10000/dt)   #parameter to update erosion rates for the 10ky average for sed supply
 
 ### IMPORT MODEL SPIN UP ##################################
+""" The text files can be changed to import any topography. Text files must be the same length with one column for elevation of bedrock (z), height of sediment (sed_depth) and erosion history (dz_b_save) that helps calculate sediment supply. Distance will need to be supplied and the node spacing adjusted in the instantiated model and/or in the inputs.py file. """
 river.z = np.genfromtxt('z_endspin.txt') # text file with 1 column and n rows, where n = nodes
 river.sed_depth = np.genfromtxt('sed_endspin.txt') # text file with 1 column and n rows, where n = nodes
 dz_b_save = np.genfromtxt('dzb_endspin.txt') # text file with k10 columns and n rows, where n = nodes, and k10 = 10,000 / dt - records 10,000 year history of fluvial erosion
-
-os.chdir('analysis')
           
-### SET ELA PARAMETERS
+### SET ELA PARAMETERS #####################################
+""" These values are based on those in Egholm et al., 2012. They can be changed, however, note that the model will break if the glacier extends to the last node, so the lower ELA cannot be too low relative to model elevation."""
 averageELA = 2500 # meters
 amplitude = 1000 # meters
 
-### RUN MODEL WITH GLACIERS #############################
+##################################
+#                                #
+#     STEP 2: Run the model      #
+#                                #
+##################################
+
+os.chdir('analysis')
+
+### SET UP TIME ############################################
 dt = int(dt)
 run_time = 800000 #years
 time=0
 
-# create empty variables
+### CREATE EMPTY VARIABLES ##################################
 HICE_prior = 1 * river.HICE[:]
 dz_b_foricalc = np.zeros(nodes)
 dzbforsave = np.zeros(nodes)
 egforsave = np.zeros(nodes)
 
+### LOOP THROUGH THE MODEL & UPDATE TOPOGRAPHY ################
 while time in range(run_time):
     time += dt
+    
     #### GLACIAL EROSION ######################################################    
-    Eg_total, ELA = river.run_one_glacial(time, averageELA, amplitude, dt_g, dt)
-    dz_b_foricalc += Eg_total
+    if glaciated_sw == True:
+        Eg_total, ELA = river.run_one_glacial(time, averageELA, amplitude, dt_g, dt)
+    else: 
+        Eg_total = np.zeros(nodes)
+    dz_b_foricalc += Eg_total # sums erosion for the isostacy calculation
 
     #### FLUVIAL EROSION ######################################################
-    river.get_sediment_size(D0, a) # updated based on glacial extent
+    river.get_sediment_size(D0, a) # update each time step based on glacial extent
     if sediment_transport == True:
+        """ Change erosion type here depending on the model you want to run. Options are: SklarDietrich, Turowski, Shobe, if no others are offered, defaults to depth threshold"""
         dz_s, dz_b, dz_w = river.run_one_fluvial(dz_b_save, backgroundU, erosion_depth_threshold, dt, erosion_type = 'Turowski')
     else:
         dz_b = river.run_one_fluvial_nosed(backgroundU, dt)
-    dz_b_foricalc += dz_b
+    dz_b_foricalc += dz_b # sums erosion for isostacy calculation
 
     #### ISOSTATIC ADJUSTMENTS ################################################
     if isostacy_sw == True:
@@ -113,14 +135,14 @@ while time in range(run_time):
             HICE_prior[:] = river.HICE[:]
             dz_b_foricalc[:] = 0
 
-    #### UPDATE EROSION FOR SEDIMENT SUPPLY
+    #### UPDATE EROSION FOR SEDIMENT SUPPLY ##################################
     dz_b_save[:,int((time/dt)%k10)] = -dz_b/dt
     
-    #### UPDATE VARIABLES FOR OUTPUT
+    #### UPDATE VARIABLES FOR OUTPUT #########################################
     dzbforsave += -dz_b/dt
     egforsave += Eg_total/dt
     
-    #### IMPOSE UPLIFT FOR NEXT ROUND
+    #### IMPOSE UPLIFT FOR NEXT ROUND ########################################
     river.z += backgroundU*dt
     river.z[-1] = 0
     river.sed_depth[-1] = 0

@@ -1,13 +1,16 @@
 
 """ Variables """
-backgroundU = 0.01/1000          # rock uplift rate, in m/yr
+backgroundU = 0.01/1000         # rock uplift rate, in m/yr
 D0 = 0.1                        # initial median grain size, in meters
+a = 0.02/1000                   # attrition rate in m/m from Sternberg's Law
+C2 = 0.001                      # glacial erosion constant, from Iverson, 2012
 
 """ Switches to change model type """
 glacial_discharge_sw = True     # Boolean switch to turn glacial meltwater input to fluvial system on or off
 glacial_sed_supply_sw = True    # Boolean switch to turn glacially eroded bedload supply to fluvial system on or off
 isostacy_sw = True             # Boolean switch to turn isostatic calculations on or off
 sediment_transport = True      # Boolean switch to turn sediment transport calculations on/off
+glaciated_sw = True            # Boolean switch to turn glaciation on/off
 
 """ Time """
 dt = 1                          # model timestep, years
