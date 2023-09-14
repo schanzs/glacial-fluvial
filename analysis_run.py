@@ -24,7 +24,7 @@ Questions? Contact:
 """
 
 import numpy as np
-import os
+import pandas as pd
 from glacial_fluvial_functions import stream
 from inputs import *
 
@@ -64,10 +64,14 @@ PARAMETERS imported from inputs.py are:
 #                                   #
 #####################################
 
-### CREATE NEW FOLDER TO SAVE OUTPUTS #####################
-path = os.getcwd()
-new_dir = path + '/analysis'
-os.mkdir(new_dir)
+### SPECIFY VARIABLES TO SAVE #####################
+variables_to_save1D = ('z', 'Wv', 'sed_depth', 'HICE', 'dzbforsave', 'egforsave')
+
+dict1D_save = {}
+for variable in variables_to_save1D:
+    variable_name = variable + '_save'
+    dict1D_save[variable_name] = {}
+
 
 ### INSTANTIATE MODEL #####################################
 river = stream(dx, nodes, initial_slope, initial_sed_depth, glacial_sed_supply_sw, glacial_discharge_sw, sediment_transport)
@@ -93,21 +97,19 @@ amplitude = 1000 # meters
 #                                #
 ##################################
 
-os.chdir('analysis')
-
 ### SET UP TIME ############################################
 dt = int(dt)
-run_time = 800000 #years
+run_time = 200000 #years
 time=0
 
 ### CREATE EMPTY VARIABLES ##################################
 HICE_prior = 1 * river.HICE[:]
 dz_b_foricalc = np.zeros(nodes)
-dzbforsave = np.zeros(nodes)
-egforsave = np.zeros(nodes)
+river.dzbforsave = np.zeros(nodes)
+river.egforsave = np.zeros(nodes)
 
 ### LOOP THROUGH THE MODEL & UPDATE TOPOGRAPHY ################
-while time in range(run_time):
+while time < run_time:
     time += dt
     
     #### GLACIAL EROSION ######################################################    
@@ -121,7 +123,7 @@ while time in range(run_time):
     river.get_sediment_size(D0, a) # update each time step based on glacial extent
     if sediment_transport == True:
         """ Change erosion type here depending on the model you want to run. Options are: SklarDietrich, Turowski, Shobe, if no others are offered, defaults to depth threshold"""
-        dz_s, dz_b, dz_w = river.run_one_fluvial(dz_b_save, backgroundU, erosion_depth_threshold, dt, erosion_type = 'Turowski')
+        dz_s, dz_b, dz_w = river.run_one_fluvial(dz_b_save, backgroundU, erosion_depth_threshold, dt, erosion_type = 'SklarDietrich')
     else:
         dz_b = river.run_one_fluvial_nosed(backgroundU, dt)
     dz_b_foricalc += dz_b # sums erosion for isostacy calculation
@@ -139,8 +141,8 @@ while time in range(run_time):
     dz_b_save[:,int((time/dt)%k10)] = -dz_b/dt
     
     #### UPDATE VARIABLES FOR OUTPUT #########################################
-    dzbforsave += -dz_b/dt
-    egforsave += Eg_total/dt
+    river.dzbforsave += -dz_b/dt
+    river.egforsave += Eg_total/dt
     
     #### IMPOSE UPLIFT FOR NEXT ROUND ########################################
     river.z += backgroundU*dt
@@ -149,14 +151,15 @@ while time in range(run_time):
        
     ##### SAVE VARIABLES ######################################################
     if time%1000 == 0:    # save variables every 1000 years
-        year = time
-        np.savetxt('z_%06d.txt' % year, river.z)
-        np.savetxt('sed_%06d.txt' % year, river.sed_depth)
-        np.savetxt('ice_%06d.txt' % year, river.HICE)
-        np.savetxt('dzb_%06d.txt' % year, dzbforsave)
-        np.savetxt('eg_%06d.txt' % year, egforsave)
-        np.savetxt('wv_%06d.txt' % year, river.Wv)
-        
+        for item in variables_to_save1D:
+            var_name = item + '_save'
+            dict1D_save[var_name][time] = getattr(river, item)*1
+
         # clear the variable placeholders
-        dzbforsave[:] = 0
-        egforsave[:] = 0
+        river.dzbforsave *= 0
+        river.egforsave *= 0
+    
+####### SAVE FINAL VARIABLES #################
+df1D = pd.DataFrame(dict1D_save)
+
+df1D.to_pickle("./oneDvariables.pkl")
