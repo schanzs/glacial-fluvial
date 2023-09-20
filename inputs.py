@@ -22,5 +22,4 @@ dx = 2000                       # distance between model nodes, meters. Found 20
 nodes = 100                     # number of nodes in the model
 initial_slope = 0.02            # initial slope of model system. Overriden in block uplift scenario
 initial_sed_depth = 0.1         # initial depth of sediment, meters
-a = 0.02/1000                   # attrition rate, Sternberg's Law
 erosion_depth_threshold = 0.2   # thickness of sediment, m, that prevents bedrock erosion in cover effect
