@@ -41,6 +41,7 @@ class stream(object):
     frac_yr_transport = 0.05  # fraction of the year experiencing erosion
     L = 0.2             # lambda, porosity of bedload
     kf = -5e-5        # vertical erosion coefficient
+    # kf = -3e-3   # from Yanites, 2018
     kw = -7.3*kf        # lateral bedrock erosion coefficient, 7.3 times vertical from Finnegan and Dietrich, 2012
     A = 2.1*10e-18      # Arrhenius constant
     C1 = 0.0012         # glacial sliding coefficient from MacGregor et al (2000)
@@ -50,7 +51,7 @@ class stream(object):
     
     def __init__(self, dx, nodes, initial_slope, initial_sed_depth, glacial_sed_supply_sw, glacial_discharge_sw, sediment_transport):
         """
-        Initalization for object of class stream. Also creates empty variables for later calculations.
+        Initalization for object of class stream
         ----------
         dx : integer
             meter spacing between nodes.
@@ -96,7 +97,7 @@ class stream(object):
     
     def get_basin_geometry(self):
         """
-        Calculates drainage area, discharge, and channel width based on power-law relationships to distance. Method is typically called right after instantiation of object and is not updated later.
+        Calculates drainage area, discharge, and channel width based on power-law relationships to distance.
         
         Ah      : drainage area, square meters
         Qwi     : water discharge from power-law, not included glacial melt, cubic meters per second
@@ -124,7 +125,7 @@ class stream(object):
        
     def get_sediment_in(self, dz_b, dt):
         """
-        Calculates the amount of sediment supplied from hillslopes. Assumes hillslopes erode at the same rate as the river incises, with that incision averaged over 10,000 years. Calculates Qs_hills, the sediment supply from hillslopes. 
+        Calculates the amount of sediment supplied from hillslopes. Assumes hillslopes erode at the same rate as the river incises, with that incision averaged over 10,000 years. Calculates Qs_hills, the sediment supply from hillslopes.
 
         Parameters
         ----------
@@ -144,7 +145,7 @@ class stream(object):
          
     def get_sediment_size(self, D0, a):
         """
-        Calculates the size of sediment in the channel using Sternberg's law and the attrition rate 'a' set in the input file. The initial median grain size is set in the input file, and occurs at the first fluvial node - this is updated every timestep to account for glacial extent. Assumption is that glacial erosion occurs through quarrying (main erosion process in glacial erosion function) and this provides most of the bedload. Minimum grain size is set to 0.005 meters (5 mm). Creates self.D, an array of grain sizes.
+        Calculates the size of sediment in the channel using Sternberg's law and the attrition rate a set in the input file. The initial median grain size is set in the input file, and occurs at the first fluvial node - this is updated every timestep to account for glacial extent. Assumption is that glacial erosion occurs through quarrying (main erosion process in glacial erosion function) and this provides most of the bedload. Minimum grain size is set to 0.005 meters (5 mm). Creates self.D, an array of grain sizes.
 
         Parameters
         ----------
@@ -180,7 +181,9 @@ class stream(object):
 
         """
         topo = self.sed_depth + self.z
-        self.slope = np.append([np.diff(topo)/np.diff(self.x)], [0])
+        slope = np.diff(topo)/np.diff(self.x) # nodes-1 length, i-(i-1)
+        self.slope = np.append([slope], [0])
+        self.slope[-1] = 0
         self.slope[self.slope>0] = 0
         
         
@@ -217,7 +220,7 @@ class stream(object):
 
     def calc_bank_erosion(self, dt):
         """
-        Calculates lateral erosion of the bank using shear stress and a lateral erodibility coefficient. If the valley has been widened previously by glaciation, then a different lateral erodibility is used, assuming alluvial banks are eroded faster than bedrock (meters vs mm's per year). Channel width remains the same but eroded material becomes part of the sediment flux downstream; this allows glacial debris to be mobilized during interglacials.
+        Calculates lateral erosion of the bank using shear stress and a lateral erodibility coefficient. If the valley has been widened previously by glaciation, then a different lateral erodibility is used, assuming alluvial banks are preferentially eroded over bedrock. Channel width remains the same but eroded material becomes part of the sediment flux downstream; this allows glacial debris to be mobilized during interglacials.
 
         Parameters
         ----------
@@ -396,7 +399,30 @@ class stream(object):
                 ELA = -amplitude/90000*cycle_i + (averageELA+amplitude/2 + amplitude/9)
                 
         return ELA
-
+    
+    def calc_ELA_vostok(self, yrBP, deltaC, analysistime, ELA_pinedale, ELA_now, dt):
+        """ Calculate the ELA on an annual basis 
+        """
+        # trim to analysis time:
+        deltaC = deltaC[yrBP<analysistime]
+        yrBP = yrBP[yrBP<analysistime]
+        
+        # find linear relationship between deltaC and ELA
+        deltaC_pinedale = np.min(deltaC)
+        intercept = ELA_now
+        if int(deltaC_pinedale) == 0:
+            ELA = np.ones(len(deltaC))*ELA_now
+        else:
+            slope = (ELA_pinedale - ELA_now) / (deltaC_pinedale - 0)
+            ELA = intercept + deltaC*slope
+        
+        ELAyr = analysistime - yrBP
+        
+        # use spline interpolation to get new ELA/ELAyr pairs:
+        years = np.arange(0, analysistime, dt)
+        newELA = np.interp(years, ELAyr[::-1], ELA[::-1])
+        
+        return newELA
     
     def calc_glacial_erosion(self, ELA2, dt_g):
         """
