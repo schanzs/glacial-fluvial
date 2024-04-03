@@ -10,6 +10,11 @@ import pandas as pd
 import os
 import matplotlib.pyplot as plt
 from matplotlib import cm
+import matplotlib as mpl
+
+cmap = mpl.cm.winter
+bounds = [0, 5, 10, 25, 50, 100]
+norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
 
 plt.rcParams['font.family'] = 'Arial'
 plt.rcParams['font.size'] = 12
@@ -36,6 +41,7 @@ a_folders = ('0.0001', '5e-05', '1e-05')
 
 os.chdir('..') # get out of figure_scripts folder
 os.chdir('data') # get into data
+
 
 i = 0
 for u_folder in uplift_folders:
@@ -69,20 +75,36 @@ for u_folder in uplift_folders:
             
 fig, ax = plt.subplots(1,2, figsize = (8,4))
 
-linecolors = cm.viridis(np.linspace(0, 1, 50))
+bump = np.zeros(45)
+for i in range(45):
+    glacial_extent = average_glacial_extent[i]
+    if glacial_extent >= bounds[4]:
+        bump[i] = 4.5
+    elif glacial_extent >= bounds[3]:
+        bump[i] = 4
+    elif glacial_extent >= bounds[2]:
+        bump[i] = 2
+    elif glacial_extent >= bounds[1]:
+        bump[i] = 1
+    elif glacial_extent > bounds[0]:
+        bump[i] = 0.5
+    else:
+        bump[i] = 0
+        
 
 for i in range(45):
+    
+    lcolor = mpl.cm.winter(norm(average_glacial_extent[i]))
+    alphavalue = 1
+    
     if average_glacial_extent[i] < 50:
         if average_glacial_extent[i] == 0:
             lcolor = 'goldenrod'
             alphavalue = 0.3
-        else:
-            lcolor = linecolors[int(average_glacial_extent[i])]
-            alphavalue = 1
-        ax[1].plot(time/1000, sed_ds[i,:], lw = 2, color = lcolor, alpha = alphavalue)
-    else:
-        lcolor = 'yellow'
-    ax[0].plot(time/1000, sed_us[i,:], lw = 2, color = lcolor, alpha = alphavalue)
+
+        ax[1].plot(time/1000, sed_ds[i,:]+bump[i]*50, lw = 2, color = lcolor, alpha = alphavalue)
+
+    ax[0].plot(time/1000, sed_us[i,:]+bump[i]*1, lw = 2, color = lcolor, alpha = alphavalue)
     
     
 ### ----- CUSTOMIZE PLOTS ---- ##
@@ -90,6 +112,10 @@ os.chdir('..') # get out of data folder
 os.chdir('figure_scripts')
 os.chdir('figures')
 
+for k in np.array((0, 0.5, 1, 2, 4, 4.5)):
+    ax[0].hlines(0+k*1, 0, 800, ls = '--', color = 'grey', )
+    ax[1].hlines(0 + k*50, 0, 800, ls = '--', color = 'grey')
+    
 for i in range(2):
     ax[i].tick_params(width = 2, direction = 'inout', length = 8)
     plt.setp(ax[i].spines.values(), linewidth = 2)
@@ -98,7 +124,7 @@ ax[0].set_ylabel('Sediment depth (m)', weight = 'bold', fontsize = 14)
 fig.text(0.5, 0.04, 'Time (ky)', fontsize = 14, weight = 'bold', ha = 'center')
 
 
-sm = cm.ScalarMappable(cmap = 'viridis', norm = plt.Normalize(vmin = 0, vmax = 50)) 
-fig.colorbar(sm, ax = ax, location = 'right', label = 'Average glacial extent (km)')
+sm = cm.ScalarMappable(cmap = 'winter', norm = mpl.colors.BoundaryNorm(bounds, cmap.N)) 
+fig.colorbar(sm, ax = ax, location = 'right', label = 'Mean glacial extent (km)')
 
 plt.savefig('sed_depth.svg')
